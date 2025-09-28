@@ -43,12 +43,6 @@ No extra arguments. Everything (JSON + path + helper functions) lives in that on
 
 ---
 
-## Install
-
-Add to your Rust project:
-
----
-
 ## Quick Start
 
 ### CLI
