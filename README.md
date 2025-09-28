@@ -158,5 +158,4 @@ Covers:
 **Potential extensions:**
 - `contains(haystack, needle)`, regex `match()`
 - Richer escaping and Unicode
-- Case-folding options
 - `map`, `pluck`, `flatten`, and other transformations
