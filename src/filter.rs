@@ -1,5 +1,5 @@
 use serde_json::Value;
-use crate::{jsonpath::Parser, comparison::cmp_values};
+use crate::comparison::cmp_values;
 use crate::engine::JpOptions;
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,7 @@ pub enum PathToken {
 }
 
 use crate::jsonpath::ParseErr;
+use crate::parser::Parser;
 
 pub fn parse_filter_or(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     let mut left = parse_filter_and(parser)?;

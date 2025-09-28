@@ -1,4 +1,6 @@
+// src/expression.rs
 use crate::{first, from_json, or_default, unique};
+use crate::parser::{Parser, ParseError};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -7,56 +9,54 @@ pub enum ENode {
     Str(String),
 }
 
-#[derive(Debug)]
-pub enum EParseErr {
-    Invalid(String),
-}
+pub type EParseErr = ParseError;
 
 pub fn parse_expr(input: &str) -> Result<ENode, EParseErr> {
     let mut p = EParser::new(input);
     let node = p.parse_node()?;
     p.skip_ws();
     if !p.eof() {
-        return Err(EParseErr::Invalid("trailing input".into()));
+        return Err(EParseErr::InvalidSyntax("trailing input".into()));
     }
     Ok(node)
 }
 
 struct EParser<'a> {
-    s: &'a str,
-    i: usize,
+    parser: Parser<'a>,
 }
 
 impl<'a> EParser<'a> {
     fn new(s: &'a str) -> Self {
-        Self { s, i: 0 }
+        Self {
+            parser: Parser::new(s),
+        }
     }
 
     fn parse_node(&mut self) -> Result<ENode, EParseErr> {
-        self.skip_ws();
-        if self.peek_char() == Some('"') || self.peek_char() == Some('\'') {
-            return Ok(ENode::Str(self.parse_string()?));
+        self.parser.skip_ws();
+        if self.parser.peek_char() == Some('"') || self.parser.peek_char() == Some('\'') {
+            return Ok(ENode::Str(self.parser.parse_quoted_string()?));
         }
-        let name = self.parse_ident()?;
-        self.skip_ws();
-        self.expect('(')?;
+        let name = self.parser.parse_identifier()?;
+        self.parser.skip_ws();
+        self.parser.expect('(')?;
         let args = self.parse_args()?;
-        self.expect(')')?;
+        self.parser.expect(')')?;
         Ok(ENode::Call { name, args })
     }
 
     fn parse_args(&mut self) -> Result<Vec<ENode>, EParseErr> {
         let mut out = Vec::new();
-        self.skip_ws();
-        if self.peek_char() == Some(')') {
+        self.parser.skip_ws();
+        if self.parser.peek_char() == Some(')') {
             return Ok(out);
         }
         loop {
             let node = self.parse_node()?;
             out.push(node);
-            self.skip_ws();
-            if self.consume_char(',') {
-                self.skip_ws();
+            self.parser.skip_ws();
+            if self.parser.consume_char(',') {
+                self.parser.skip_ws();
                 continue;
             }
             break;
@@ -64,93 +64,12 @@ impl<'a> EParser<'a> {
         Ok(out)
     }
 
-    fn parse_ident(&mut self) -> Result<String, EParseErr> {
-        let start = self.i;
-        while let Some(c) = self.peek_char() {
-            if c == '_' || c.is_ascii_alphanumeric() {
-                self.i += 1;
-            } else {
-                break;
-            }
-        }
-        if self.i == start {
-            return Err(EParseErr::Invalid("identifier expected".into()));
-        }
-        Ok(self.s[start..self.i].to_string())
-    }
-
-    fn parse_string(&mut self) -> Result<String, EParseErr> {
-        let quote = self
-            .peek_char()
-            .ok_or_else(|| EParseErr::Invalid("string".into()))?;
-        if quote != '"' && quote != '\'' {
-            return Err(EParseErr::Invalid("quoted string expected".into()));
-        }
-        self.i += 1;
-        let mut out = String::new();
-        while let Some(c) = self.peek_char() {
-            self.i += 1;
-            if c == quote {
-                return Ok(out);
-            }
-            if c == '\\' {
-                if let Some(nc) = self.peek_char() {
-                    self.i += 1;
-                    match nc {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        'r' => out.push('\r'),
-                        '\\' => out.push('\\'),
-                        '"' => out.push('"'),
-                        '\'' => out.push('\''),
-                        _ => {
-                            out.push('\\');
-                            out.push(nc);
-                        }
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        Err(EParseErr::Invalid("unterminated string".into()))
-    }
-
-    fn expect(&mut self, c: char) -> Result<(), EParseErr> {
-        if self.consume_char(c) {
-            Ok(())
-        } else {
-            Err(EParseErr::Invalid(format!("expected '{}'", c)))
-        }
-    }
-
-    fn consume_char(&mut self, c: char) -> bool {
-        if self.peek_char() == Some(c) {
-            self.i += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn peek_char(&self) -> Option<char> {
-        self.s[self.i..].chars().next()
-    }
-
     fn skip_ws(&mut self) {
-        while let Some(c) = self.peek_char() {
-            if c.is_whitespace() {
-                self.i += 1;
-            } else {
-                break;
-            }
-        }
+        self.parser.skip_ws();
     }
 
     fn eof(&self) -> bool {
-        self.i >= self.s.len()
+        self.parser.eof()
     }
 }
 

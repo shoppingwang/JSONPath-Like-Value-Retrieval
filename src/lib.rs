@@ -6,6 +6,7 @@ mod expression;
 mod jsonpath;
 mod filter;
 mod comparison;
+mod parser;
 
 use serde_json::Value;
 use errors::{Result, EvalError};

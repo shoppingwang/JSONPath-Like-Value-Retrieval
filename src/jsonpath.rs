@@ -1,6 +1,7 @@
-use serde_json::Value;
-use crate::filter::FilterExpr;
 use crate::engine::JpOptions;
+use crate::filter::FilterExpr;
+use crate::parser::{ParseError, Parser};
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct Path {
@@ -22,10 +23,7 @@ pub enum Segment {
     Filter(Box<FilterExpr>), // [?(expr)]
 }
 
-#[derive(Debug)]
-pub enum ParseErr {
-    InvalidSyntax(String),
-}
+pub type ParseErr = ParseError;
 
 /// Internal engine
 pub fn from_value_with_opts(data: &Value, path: &str, opts: &JpOptions) -> Value {
@@ -43,372 +41,301 @@ pub fn from_value_with_opts(data: &Value, path: &str, opts: &JpOptions) -> Value
 }
 
 fn parse_path(input: &str) -> Result<Path, ParseErr> {
-    let mut p = Parser::new(input);
+    let mut p = PathParser::new(input);
     p.parse()
 }
 
-pub struct Parser<'a> {
-    s: &'a str,
-    i: usize,
+pub struct PathParser<'a> {
+    parser: Parser<'a>,
 }
 
-impl<'a> Parser<'a> {
+impl<'a> PathParser<'a> {
     pub fn new(s: &'a str) -> Self {
-        Self { s, i: 0 }
+        Self {
+            parser: Parser::new(s),
+        }
     }
 
     fn parse(&mut self) -> Result<Path, ParseErr> {
         let mut segments = Vec::new();
-        self.skip_ws();
-        if !self.consume_char('$') {
+        self.parser.skip_ws();
+        if !self.parser.consume_char('$') {
             return Err(ParseErr::InvalidSyntax("path must start with `$`".into()));
         }
         segments.push(Segment::Root);
 
-        while !self.eof() {
-            self.skip_ws();
-            if self.peek_str("..") {
-                self.i += 2;
-                segments.push(Segment::Recursive);
-                continue;
+        while !self.parser.eof() {
+            self.parser.skip_ws();
+
+            if let Some(segment) = self.parse_next_segment()? {
+                segments.push(segment);
+            } else {
+                break;
             }
-            if self.consume_char('.') {
-                if self.consume_char('*') {
-                    segments.push(Segment::Wildcard);
-                    continue;
-                }
-                let key = self.parse_identifier()?;
-                segments.push(Segment::Key(key));
-                continue;
-            }
-            if self.consume_char('[') {
-                self.skip_ws();
-                if self.consume_char('*') {
-                    self.expect(']')?;
-                    segments.push(Segment::Wildcard);
-                    continue;
-                }
-                if self.peek_char() == Some('?') {
-                    self.i += 1;
-                    self.expect('(')?;
-                    let expr = crate::filter::parse_filter_or(self)?;
-                    self.expect(')')?;
-                    self.expect(']')?;
-                    segments.push(Segment::Filter(Box::new(expr)));
-                    continue;
-                }
-                if self.peek_char() == Some('\'') || self.peek_char() == Some('"') {
-                    let key = self.parse_quoted_string()?;
-                    self.expect(']')?;
-                    segments.push(Segment::Key(key));
-                    continue;
-                }
-                let slice_content = self.capture_until(']')?;
-                self.expect(']')?;
-                if slice_content.contains(':') {
-                    let parts: Vec<&str> = slice_content.split(':').collect();
-                    if parts.len() > 3 {
-                        return Err(ParseErr::InvalidSyntax("slice too many components".into()));
-                    }
-                    let parse_opt_i64 = |s: &str| -> Result<Option<i64>, ParseErr> {
-                        let t = s.trim();
-                        if t.is_empty() {
-                            Ok(None)
-                        } else {
-                            t.parse::<i64>()
-                                .map(Some)
-                                .map_err(|_| ParseErr::InvalidSyntax("bad slice number".into()))
-                        }
-                    };
-                    let start = parse_opt_i64(parts.get(0).copied().unwrap_or(""))?;
-                    let end = parse_opt_i64(parts.get(1).copied().unwrap_or(""))?;
-                    let step = parse_opt_i64(parts.get(2).copied().unwrap_or(""))?;
-                    segments.push(Segment::Slice { start, end, step });
-                } else {
-                    let mut tmp = Parser::new(slice_content);
-                    let idx = tmp.parse_int()?;
-                    segments.push(Segment::Index(idx));
-                }
-                continue;
-            }
-            break;
         }
         Ok(Path { segments })
     }
 
-    // Helper methods for parsing
-    pub fn parse_identifier(&mut self) -> Result<String, ParseErr> {
-        let start = self.i;
-        while let Some(c) = self.peek_char() {
-            if c == '_' || c.is_ascii_alphanumeric() {
-                self.i += 1;
-            } else {
-                break;
-            }
+    fn parse_next_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        if self.parser.peek_str("..") {
+            self.parser.consume_char('.');
+            self.parser.consume_char('.');
+            return Ok(Some(Segment::Recursive));
         }
-        if self.i == start {
-            return Err(ParseErr::InvalidSyntax("identifier expected".into()));
+
+        if self.parser.consume_char('.') {
+            return self.parse_dot_segment();
         }
-        Ok(self.s[start..self.i].to_string())
+
+        if self.parser.consume_char('[') {
+            return self.parse_bracket_segment();
+        }
+
+        Ok(None)
     }
 
-    pub fn parse_int(&mut self) -> Result<i64, ParseErr> {
-        let start = self.i;
-        if self.peek_char() == Some('-') {
-            self.i += 1;
-        }
-        while let Some(c) = self.peek_char() {
-            if c.is_ascii_digit() {
-                self.i += 1;
-            } else {
-                break;
-            }
-        }
-        if self.i == start || (self.i == start + 1 && &self.s[start..self.i] == "-") {
-            return Err(ParseErr::InvalidSyntax("expected integer".into()));
-        }
-        self.s[start..self.i]
-            .parse::<i64>()
-            .map_err(|_| ParseErr::InvalidSyntax("bad integer".into()))
-    }
-
-    pub fn parse_number_literal(&mut self) -> Result<Value, ParseErr> {
-        let start = self.i;
-        if self.peek_char() == Some('-') {
-            self.i += 1;
-        }
-        while let Some(c) = self.peek_char() {
-            if c.is_ascii_digit() {
-                self.i += 1;
-            } else {
-                break;
-            }
-        }
-        if self.peek_char() == Some('.') {
-            self.i += 1;
-            while let Some(c) = self.peek_char() {
-                if c.is_ascii_digit() {
-                    self.i += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-        let s = &self.s[start..self.i];
-        if s.is_empty() {
-            return Err(ParseErr::InvalidSyntax("number expected".into()));
-        }
-        if s.contains('.') {
-            let f: f64 = s
-                .parse()
-                .map_err(|_| ParseErr::InvalidSyntax("bad float".into()))?;
-            Ok(Value::from(f))
+    fn parse_dot_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        if self.parser.consume_char('*') {
+            Ok(Some(Segment::Wildcard))
         } else {
-            let i: i64 = s
-                .parse()
-                .map_err(|_| ParseErr::InvalidSyntax("bad int".into()))?;
-            Ok(Value::from(i))
+            let key = self.parser.parse_identifier()?;
+            Ok(Some(Segment::Key(key)))
         }
     }
 
-    pub fn parse_quoted_string(&mut self) -> Result<String, ParseErr> {
-        let quote = self
-            .peek_char()
-            .ok_or_else(|| ParseErr::InvalidSyntax("string".into()))?;
-        if quote != '\'' && quote != '"' {
-            return Err(ParseErr::InvalidSyntax("expected quoted string".into()));
+    fn parse_bracket_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        self.parser.skip_ws();
+
+        if self.parser.consume_char('*') {
+            self.parser.expect(']')?;
+            return Ok(Some(Segment::Wildcard));
         }
-        self.i += 1;
-        let mut out = String::new();
-        while let Some(c) = self.peek_char() {
-            self.i += 1;
-            if c == quote {
-                return Ok(out);
-            }
-            if c == '\\' {
-                if let Some(nc) = self.peek_char() {
-                    self.i += 1;
-                    match nc {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        'r' => out.push('\r'),
-                        '\\' => out.push('\\'),
-                        '"' => out.push('"'),
-                        '\'' => out.push('\''),
-                        _ => {
-                            out.push('\\');
-                            out.push(nc);
-                        }
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                out.push(c);
-            }
+
+        if self.parser.peek_char() == Some('?') {
+            return self.parse_filter_segment();
         }
-        Err(ParseErr::InvalidSyntax("unterminated string".into()))
+
+        if matches!(self.parser.peek_char(), Some('\'') | Some('"')) {
+            let key = self.parser.parse_quoted_string()?;
+            self.parser.expect(']')?;
+            return Ok(Some(Segment::Key(key)));
+        }
+
+        self.parse_index_or_slice_segment()
     }
 
-    pub fn capture_until(&mut self, end: char) -> Result<&'a str, ParseErr> {
-        let start = self.i;
-        while let Some(c) = self.peek_char() {
-            if c == end {
-                break;
-            }
-            self.i += 1;
-        }
-        if self.peek_char() != Some(end) {
-            return Err(ParseErr::InvalidSyntax(format!("expected '{end}'")));
-        }
-        Ok(&self.s[start..self.i])
+    fn parse_filter_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        self.parser.consume_char('?');
+        self.parser.expect('(')?;
+        let expr = crate::filter::parse_filter_or(&mut self.parser)?;
+        self.parser.expect(')')?;
+        self.parser.expect(']')?;
+        Ok(Some(Segment::Filter(Box::new(expr))))
     }
 
-    pub fn expect(&mut self, c: char) -> Result<(), ParseErr> {
-        if self.consume_char(c) {
-            Ok(())
+    fn parse_index_or_slice_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        let slice_content = self.parser.capture_until(']')?;
+        self.parser.expect(']')?;
+
+        if slice_content.contains(':') {
+            self.parse_slice(&slice_content)
         } else {
-            Err(ParseErr::InvalidSyntax(format!("expected '{}'", c)))
+            let mut tmp = Parser::new(&slice_content);
+            let idx = tmp.parse_int()?;
+            Ok(Some(Segment::Index(idx)))
         }
     }
 
-    pub fn consume_char(&mut self, c: char) -> bool {
-        if self.peek_char() == Some(c) {
-            self.i += 1;
-            true
-        } else {
-            false
+    fn parse_slice(&self, content: &str) -> Result<Option<Segment>, ParseErr> {
+        let parts: Vec<&str> = content.split(':').collect();
+        if parts.len() > 3 {
+            return Err(ParseErr::InvalidSyntax("slice too many components".into()));
         }
-    }
 
-    pub fn peek_char(&self) -> Option<char> {
-        self.s[self.i..].chars().next()
-    }
-
-    pub fn peek_str(&self, lit: &str) -> bool {
-        self.s[self.i..].starts_with(lit)
-    }
-
-    pub fn skip_ws(&mut self) {
-        while let Some(c) = self.peek_char() {
-            if c.is_whitespace() {
-                self.i += 1;
+        let parse_opt_i64 = |s: &str| -> Result<Option<i64>, ParseErr> {
+            let t = s.trim();
+            if t.is_empty() {
+                Ok(None)
             } else {
-                break;
+                t.parse::<i64>()
+                    .map(Some)
+                    .map_err(|_| ParseErr::InvalidSyntax("bad slice number".into()))
             }
-        }
-    }
+        };
 
-    pub fn eof(&self) -> bool {
-        self.i >= self.s.len()
+        let start = parse_opt_i64(parts.get(0).copied().unwrap_or(""))?;
+        let end = parse_opt_i64(parts.get(1).copied().unwrap_or(""))?;
+        let step = parse_opt_i64(parts.get(2).copied().unwrap_or(""))?;
+
+        Ok(Some(Segment::Slice { start, end, step }))
     }
 }
 
 fn eval_path<'a>(root: &'a Value, path: &Path, opts: &JpOptions) -> Vec<&'a Value> {
     let mut current: Vec<&Value> = vec![root];
     for seg in &path.segments {
-        current = match seg {
-            Segment::Root => vec![root],
-            Segment::Key(k) => current
-                .into_iter()
-                .flat_map(|v| match v {
-                    Value::Object(map) => map.get(k).into_iter().collect(),
-                    _ => Vec::new(),
-                })
-                .collect(),
-            Segment::Index(i) => {
-                if *i < 0 {
-                    Vec::new()
-                } else {
-                    let idx = *i as usize;
-                    current
-                        .into_iter()
-                        .flat_map(|v| match v {
-                            Value::Array(arr) => arr.get(idx).into_iter().collect(),
-                            _ => Vec::new(),
-                        })
-                        .collect()
-                }
-            }
-            Segment::Slice { start, end, step } => current
-                .into_iter()
-                .flat_map(|v| match v {
-                    Value::Array(arr) => slice_array(arr, *start, *end, *step),
-                    _ => Vec::new(),
-                })
-                .collect(),
-            Segment::Wildcard => current
-                .into_iter()
-                .flat_map(|v| match v {
-                    Value::Array(arr) => arr.iter().collect(),
-                    Value::Object(map) => map.values().collect(),
-                    _ => Vec::new(),
-                })
-                .collect(),
-            Segment::Recursive => current
-                .into_iter()
-                .flat_map(|v| {
-                    let mut out = Vec::new();
-                    recurse_collect(v, &mut out);
-                    out
-                })
-                .collect(),
-            Segment::Filter(expr) => current
-                .into_iter()
-                .flat_map(|v| match v {
-                    Value::Array(arr) => arr.iter().collect(),
-                    _ => vec![v],
-                })
-                .filter(|v| crate::filter::eval_filter(expr, v, opts))
-                .collect(),
-        };
+        current = eval_segment(&current, seg, root, opts);
     }
     current
 }
 
-fn slice_array<'a>(
-    arr: &'a Vec<Value>,
+fn eval_segment<'a>(
+    current: &[&'a Value],
+    segment: &Segment,
+    root: &'a Value,
+    opts: &JpOptions,
+) -> Vec<&'a Value> {
+    match segment {
+        Segment::Root => vec![root],
+        Segment::Key(k) => eval_key_segment(current, k),
+        Segment::Index(i) => eval_index_segment(current, *i),
+        Segment::Slice { start, end, step } => eval_slice_segment(current, *start, *end, *step),
+        Segment::Wildcard => eval_wildcard_segment(current),
+        Segment::Recursive => eval_recursive_segment(current),
+        Segment::Filter(expr) => eval_filter_segment(current, expr, opts),
+    }
+}
+
+fn eval_key_segment<'a>(current: &[&'a Value], key: &str) -> Vec<&'a Value> {
+    current
+        .iter()
+        .filter_map(|v| match v {
+            Value::Object(map) => map.get(key),
+            _ => None,
+        })
+        .collect()
+}
+
+fn eval_index_segment<'a>(current: &[&'a Value], index: i64) -> Vec<&'a Value> {
+    if index < 0 {
+        return Vec::new();
+    }
+
+    let idx = index as usize;
+    current
+        .iter()
+        .filter_map(|v| match v {
+            Value::Array(arr) => arr.get(idx),
+            _ => None,
+        })
+        .collect()
+}
+
+fn eval_slice_segment<'a>(
+    current: &[&'a Value],
     start: Option<i64>,
     end: Option<i64>,
     step: Option<i64>,
 ) -> Vec<&'a Value> {
+    current
+        .iter()
+        .flat_map(|v| match v {
+            Value::Array(arr) => slice_array(arr, start, end, step),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn eval_wildcard_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
+    current.iter().flat_map(|v| get_child_values(v)).collect()
+}
+
+fn eval_recursive_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
+    current
+        .iter()
+        .flat_map(|v| {
+            let mut out = Vec::new();
+            recurse_collect(v, &mut out);
+            out
+        })
+        .collect()
+}
+
+fn eval_filter_segment<'a>(
+    current: &[&'a Value],
+    expr: &FilterExpr,
+    opts: &JpOptions,
+) -> Vec<&'a Value> {
+    current
+        .iter()
+        .flat_map(|v| get_filterable_values(v))
+        .filter(|v| crate::filter::eval_filter(expr, v, opts))
+        .collect()
+}
+
+fn get_child_values(value: &Value) -> Vec<&Value> {
+    match value {
+        Value::Array(arr) => arr.iter().collect(),
+        Value::Object(map) => map.values().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn get_filterable_values(value: &Value) -> Vec<&Value> {
+    match value {
+        Value::Array(arr) => arr.iter().collect(),
+        _ => vec![value],
+    }
+}
+
+fn slice_array(
+    arr: &Vec<Value>,
+    start: Option<i64>,
+    end: Option<i64>,
+    step: Option<i64>,
+) -> Vec<&Value> {
     let n = arr.len() as i64;
     let step = step.unwrap_or(1);
     if step == 0 {
         return Vec::new();
     }
-    let norm = |i: i64| -> i64 {
+
+    let normalize_index = |i: i64| -> i64 {
         if i < 0 {
             (n + i).clamp(0, n)
         } else {
             i.clamp(0, n)
         }
     };
-    let (mut lo, mut hi) = (start.unwrap_or(0), end.unwrap_or(n));
-    lo = norm(lo);
-    hi = norm(hi);
-    let mut out = Vec::new();
+
+    let (lo, hi) = (
+        normalize_index(start.unwrap_or(0)),
+        normalize_index(end.unwrap_or(n)),
+    );
+
     if step > 0 {
-        let mut i = lo;
-        while i < hi {
-            if let Some(v) = arr.get(i as usize) {
-                out.push(v);
-            }
-            i += step;
-        }
+        slice_forward(arr, lo, hi, step)
     } else {
-        if hi == 0 {
-            return out;
+        slice_backward(arr, lo, hi, step, n)
+    }
+}
+
+fn slice_forward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64) -> Vec<&Value> {
+    let mut out = Vec::new();
+    let mut i = lo;
+    while i < hi {
+        if let Some(v) = arr.get(i as usize) {
+            out.push(v);
         }
-        let mut i = (hi - 1).clamp(0, n - 1);
-        while i >= lo {
-            if let Some(v) = arr.get(i as usize) {
-                out.push(v);
-            }
-            i += step;
-            if i < 0 {
-                break;
-            }
+        i += step;
+    }
+    out
+}
+
+fn slice_backward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64, n: i64) -> Vec<&Value> {
+    let mut out = Vec::new();
+    if hi == 0 {
+        return out;
+    }
+
+    let mut i = (hi - 1).clamp(0, n - 1);
+    while i >= lo {
+        if let Some(v) = arr.get(i as usize) {
+            out.push(v);
+        }
+        i += step;
+        if i < 0 {
+            break;
         }
     }
     out
