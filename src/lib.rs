@@ -2,6 +2,10 @@ pub mod errors;
 pub mod context;
 pub mod engine;     // legacy engine kept intact to preserve exact JSONPath behavior
 pub mod functions;  // plugin model
+mod expression;
+mod jsonpath;
+mod filter;
+mod comparison;
 
 use serde_json::Value;
 use errors::{Result, EvalError};
@@ -24,11 +28,11 @@ impl Evaluator {
     pub fn eval(&self, expr: &str) -> Result<Value> {
         // We delegate to the original engine for correctness.
         // If the engine's parser fails, convert to EvalError::Parse.
-        let ast = match engine::parse_expr(expr) {
+        let ast = match expression::parse_expr(expr) {
             Ok(ast) => ast,
             Err(e) => return Err(EvalError::Parse(format!("{e:?}"))),
         };
-        let value = engine::eval_ast(&ast);
+        let value = expression::eval_ast(&ast);
         Ok(value)
     }
 }
