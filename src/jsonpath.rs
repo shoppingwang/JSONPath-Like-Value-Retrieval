@@ -35,6 +35,17 @@ pub fn from_value(data: &Value, path: &str) -> Value {
             if refs.is_empty() {
                 Value::Null
             } else {
+                // If exactly one match and that match itself is an array, unwrap it so we don't
+                // introduce an extra level of nesting (e.g. $.departments should yield the
+                // departments array, not [ departments_array ]). This matches the expectations
+                // in tests where selecting an array container returns the array directly, while
+                // selecting multiple elements (e.g. wildcard / recursive descent) still returns
+                // a flat array of matches.
+                if refs.len() == 1 {
+                    if let Value::Array(_) = refs[0] {
+                        return refs[0].clone();
+                    }
+                }
                 Value::Array(refs.into_iter().cloned().collect())
             }
         }
@@ -75,7 +86,7 @@ impl<'a> PathParser<'a> {
         while !self.parser.eof() {
             self.parser.skip_ws();
 
-            if let Some(segment) = self.parse_next_segment()? {
+            if let Some(segment) = self.parse_next_segment(segments.last())? {
                 segments.push(segment);
             } else {
                 break;
@@ -85,7 +96,9 @@ impl<'a> PathParser<'a> {
     }
 
     /// Parses the next segment in the path.
-    fn parse_next_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+    /// `prev` provides the previously parsed segment (if any) allowing context-sensitive parsing
+    /// for cases like recursive descent where a bare identifier or wildcard may follow (`$..name`).
+    fn parse_next_segment(&mut self, prev: Option<&Segment>) -> Result<Option<Segment>, ParseErr> {
         // Recursive descent: `..`
         if self.parser.peek_str("..") {
             self.parser.consume_char('.');
@@ -101,6 +114,21 @@ impl<'a> PathParser<'a> {
         // Bracket notation: `[key]`, `[index]`, `[slice]`, `[*]`, `[?(filter)]`
         if self.parser.consume_char('[') {
             return self.parse_bracket_segment();
+        }
+
+        // Support for bare identifier or wildcard immediately following a Recursive segment
+        // allowing `$..name` / `$..*` per JSONPath semantics.
+        if matches!(prev, Some(Segment::Recursive)) {
+            if self.parser.peek_char() == Some('*') {
+                self.parser.consume_char('*');
+                return Ok(Some(Segment::Wildcard));
+            }
+            if let Some(c) = self.parser.peek_char() {
+                if c == '_' || c.is_ascii_alphanumeric() { // start of identifier
+                    let key = self.parser.parse_identifier()?;
+                    return Ok(Some(Segment::Key(key)));
+                }
+            }
         }
 
         Ok(None)
@@ -266,16 +294,47 @@ fn eval_wildcard_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
     current.iter().flat_map(|v| get_child_values(v)).collect()
 }
 
-/// Evaluates a recursive segment: collects all descendant values recursively.
+/// Evaluates a recursive segment: collects all descendant nodes that can be searched.
+/// This implements proper JSONPath recursive descent semantics.
 fn eval_recursive_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
-    current
-        .iter()
-        .flat_map(|v| {
-            let mut out = Vec::new();
-            recurse_collect(v, &mut out);
-            out
-        })
-        .collect()
+    let mut result = Vec::new();
+
+    for &value in current {
+        // Only collect nodes that can meaningfully have keys applied to them
+        collect_searchable_nodes(value, &mut result);
+    }
+
+    result
+}
+
+/// Collects all descendant nodes that could be targets for subsequent path segments.
+/// This includes the current node and all nested objects and arrays, but excludes
+/// primitive values that cannot have keys applied to them.
+fn collect_searchable_nodes<'a>(value: &'a Value, result: &mut Vec<&'a Value>) {
+    match value {
+        Value::Object(_) => {
+            // Objects can have keys applied to them
+            result.push(value);
+            // Recurse into object values
+            if let Value::Object(obj) = value {
+                for child_value in obj.values() {
+                    collect_searchable_nodes(child_value, result);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            // Arrays can have indices applied, but we also need to search their contents
+            result.push(value);
+            // Recurse into array elements
+            for child_value in arr.iter() {
+                collect_searchable_nodes(child_value, result);
+            }
+        }
+        _ => {
+            // Primitive values (strings, numbers, booleans, null) cannot have
+            // keys applied to them, so we don't include them in recursive descent
+        }
+    }
 }
 
 /// Evaluates a filter segment: filters values using the filter expression.
@@ -369,22 +428,4 @@ fn slice_backward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64, n: i64) -> Vec<
         }
     }
     out
-}
-
-/// Recursively collects all descendant values of a value.
-fn recurse_collect<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
-    out.push(v);
-    match v {
-        Value::Array(arr) => {
-            for elt in arr {
-                recurse_collect(elt, out);
-            }
-        }
-        Value::Object(map) => {
-            for elt in map.values() {
-                recurse_collect(elt, out);
-            }
-        }
-        _ => {}
-    }
 }
