@@ -1,6 +1,6 @@
-# jp — JSONPath-like extraction with tiny expression language (Rust)
+# JSONPath-like extraction with tiny expression language (Rust)
 
-`jp` is a small Rust library and CLI that combines:
+`json-path-like-extraction` is a small Rust library and CLI that combines:
 
 1. A pragmatic **JSONPath-like engine** (dot/bracket, wildcards, recursive descent, filters, `length()`, slicing)
 2. A tiny **expression evaluator** so you can pass a **single string** like:
@@ -47,42 +47,9 @@ No extra arguments. Everything (JSON + path + helper functions) lives in that on
 
 Add to your Rust project:
 
-```toml
-# Cargo.toml
-[dependencies]
-jp = { path = "../jp" } # or use your registry / git location
-```
-
-Or clone and run as a standalone CLI:
-
-```bash
-git clone <your-repo-url>
-cd jp
-cargo build --release
-```
-
 ---
 
 ## Quick Start
-
-### As a library (Rust)
-
-```rust
-use jp::eval_expr;
-use serde_json::json;
-
-let expr = r#"
-first(
-  from_json(
-    "{\"otel\":{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":\"nexa-agent-server\"}]}}]}}",
-    "$.otel.resourceSpans[*].resource.attributes[?(@.key=='service.name')].value"
-  )
-)
-"#;
-
-let out = eval_expr(expr);
-assert_eq!(out, json!("nexa-agent-server"));
-```
 
 ### CLI
 
@@ -218,7 +185,6 @@ $.otel.resourceSpans[*].resource.attributes[? (lower(@.key) == "service.name") ]
 
 ## Performance Notes
 
-* Intended for payloads ≲ **8 KB**.
 * Operates in-memory on `serde_json::Value`.
 * `..` (recursive descent) walks the entire subtree and may collect many nodes.
 
@@ -294,10 +260,3 @@ Covers:
 * Richer escaping and Unicode in expression strings
 * Case-folding options inside expressions
 * `map`, `pluck`, `flatten`, and other transformations
-
----
-
-## Acknowledgements
-
-* `serde` / `serde_json` for JSON handling
-* Inspired by popular JSONPath dialects (Goessner/Jayway), without strict compatibility
