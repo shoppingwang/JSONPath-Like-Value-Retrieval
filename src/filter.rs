@@ -1,39 +1,43 @@
 use serde_json::Value;
 use crate::comparison::cmp_values;
 
+/// Represents a filter expression for JSONPath filtering.
 #[derive(Debug, Clone)]
 pub enum FilterExpr {
-    Eq(Operand, Operand),
-    Ne(Operand, Operand),
-    Lt(Operand, Operand),
-    Lte(Operand, Operand),
-    Gt(Operand, Operand),
-    Gte(Operand, Operand),
-    And(Box<FilterExpr>, Box<FilterExpr>),
-    Or(Box<FilterExpr>, Box<FilterExpr>),
-    Not(Box<FilterExpr>),
-    Truthy(Operand),
+    Eq(Operand, Operand),   // Equality comparison
+    Ne(Operand, Operand),   // Not equal comparison
+    Lt(Operand, Operand),   // Less than comparison
+    Lte(Operand, Operand),  // Less than or equal comparison
+    Gt(Operand, Operand),   // Greater than comparison
+    Gte(Operand, Operand),  // Greater than or equal comparison
+    And(Box<FilterExpr>, Box<FilterExpr>), // Logical AND
+    Or(Box<FilterExpr>, Box<FilterExpr>),  // Logical OR
+    Not(Box<FilterExpr>),                  // Logical NOT
+    Truthy(Operand),                       // Truthiness check
 }
 
+/// Represents an operand in a filter expression.
 #[derive(Debug, Clone)]
 pub enum Operand {
-    CurrentPath(Vec<PathToken>), // @.a['b'][0]
-    Literal(Value),              // "abc", 123, true/false/null
-    Lower(Box<Operand>),
-    Upper(Box<Operand>),
-    Length(Box<Operand>),
+    CurrentPath(Vec<PathToken>), // Path reference, e.g. @.a['b'][0]
+    Literal(Value),              // Literal value, e.g. "abc", 123, true/false/null
+    Lower(Box<Operand>),         // Lowercase transformation
+    Upper(Box<Operand>),         // Uppercase transformation
+    Length(Box<Operand>),        // Length of array, object, or string
 }
 
+/// Represents a token in a JSONPath.
 #[derive(Debug, Clone)]
 pub enum PathToken {
-    Key(String),
-    Index(i64),
-    Wildcard,
+    Key(String),     // Object key
+    Index(i64),      // Array index
+    Wildcard,        // Wildcard for any key or index
 }
 
 use crate::jsonpath::ParseErr;
 use crate::parser::Parser;
 
+/// Parses a filter expression with logical OR (`||`) operators.
 pub fn parse_filter_or(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     let mut left = parse_filter_and(parser)?;
     loop {
@@ -50,6 +54,7 @@ pub fn parse_filter_or(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     Ok(left)
 }
 
+/// Parses a filter expression with logical AND (`&&`) operators.
 fn parse_filter_and(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     let mut left = parse_filter_not(parser)?;
     loop {
@@ -66,6 +71,7 @@ fn parse_filter_and(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     Ok(left)
 }
 
+/// Parses a filter expression with logical NOT (`!`) operator.
 fn parse_filter_not(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     parser.skip_ws();
     if parser.consume_char('!') {
@@ -76,8 +82,10 @@ fn parse_filter_not(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     }
 }
 
+/// Parses a filter expression with comparison operators.
 fn parse_filter_compare(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     parser.skip_ws();
+    // Handle parenthesized expressions
     if parser.consume_char('(') {
         let inner = parse_filter_or(parser)?;
         parser.expect(')')?;
@@ -85,6 +93,7 @@ fn parse_filter_compare(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     }
     let left = parse_operand(parser)?;
     parser.skip_ws();
+    // Detect and parse comparison operators
     let op = if parser.peek_str("==") {
         parser.consume_char('=');
         parser.consume_char('=');
@@ -110,6 +119,7 @@ fn parse_filter_compare(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
     } else {
         None
     };
+    // Build the appropriate filter expression
     if let Some(op) = op {
         parser.skip_ws();
         let right = parse_operand(parser)?;
@@ -123,14 +133,18 @@ fn parse_filter_compare(parser: &mut Parser) -> Result<FilterExpr, ParseErr> {
             _ => unreachable!(),
         });
     }
+    // If no comparison, treat as truthy check
     Ok(FilterExpr::Truthy(left))
 }
 
+/// Parses an operand for filter expressions.
 fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
     parser.skip_ws();
+    // Parse string literal
     if parser.peek_char() == Some('"') || parser.peek_char() == Some('\'') {
         return Ok(Operand::Literal(Value::String(parser.parse_quoted_string()?)));
     }
+    // Parse boolean literals
     if parser.peek_str("true") {
         for _ in 0..4 { parser.consume_char('t'); parser.consume_char('r'); parser.consume_char('u'); parser.consume_char('e'); }
         return Ok(Operand::Literal(Value::Bool(true)));
@@ -139,35 +153,39 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
         for _ in 0..5 { parser.consume_char('f'); parser.consume_char('a'); parser.consume_char('l'); parser.consume_char('s'); parser.consume_char('e'); }
         return Ok(Operand::Literal(Value::Bool(false)));
     }
+    // Parse null literal
     if parser.peek_str("null") {
         for _ in 0..4 { parser.consume_char('n'); parser.consume_char('u'); parser.consume_char('l'); parser.consume_char('l'); }
         return Ok(Operand::Literal(Value::Null));
     }
-
+    // Parse lower() transformation
     if parser.peek_str("lower(") {
         for _ in 0..6 { parser.consume_char('l'); parser.consume_char('o'); parser.consume_char('w'); parser.consume_char('e'); parser.consume_char('r'); parser.consume_char('('); }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Lower(Box::new(inner)));
     }
+    // Parse upper() transformation
     if parser.peek_str("upper(") {
         for _ in 0..6 { parser.consume_char('u'); parser.consume_char('p'); parser.consume_char('p'); parser.consume_char('e'); parser.consume_char('r'); parser.consume_char('('); }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Upper(Box::new(inner)));
     }
+    // Parse length() transformation
     if parser.peek_str("length(") {
         for _ in 0..7 { parser.consume_char('l'); parser.consume_char('e'); parser.consume_char('n'); parser.consume_char('g'); parser.consume_char('t'); parser.consume_char('h'); parser.consume_char('('); }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Length(Box::new(inner)));
     }
-
+    // Parse path reference starting with '@'
     if parser.peek_char() == Some('@') {
         parser.consume_char('@');
         let mut tokens = Vec::new();
         loop {
             parser.skip_ws();
+            // Parse object key
             if parser.consume_char('.') {
                 if parser.consume_char('*') {
                     tokens.push(PathToken::Wildcard);
@@ -176,6 +194,7 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
                 let k = parser.parse_identifier()?;
                 tokens.push(PathToken::Key(k));
                 continue;
+            // Parse array index or key in brackets
             } else if parser.consume_char('[') {
                 if parser.consume_char('*') {
                     parser.expect(']')?;
@@ -199,7 +218,7 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
         }
         return Ok(Operand::CurrentPath(tokens));
     }
-
+    // Parse number literal
     if parser
         .peek_char()
         .map(|c| c == '-' || c.is_ascii_digit())
@@ -208,11 +227,14 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
         let n = parser.parse_number_literal()?;
         return Ok(Operand::Literal(n));
     }
+    // If none matched, return syntax error
     Err(ParseErr::InvalidSyntax("invalid operand".into()))
 }
 
+/// Evaluates a filter expression against a JSON value.
 pub fn eval_filter(expr: &FilterExpr, current: &Value) -> bool {
     match expr {
+        // Comparison operators use cmp_values for evaluation
         FilterExpr::Eq(a, b) => cmp_values(
             &eval_operand(a, current),
             &eval_operand(b, current),
@@ -243,13 +265,16 @@ pub fn eval_filter(expr: &FilterExpr, current: &Value) -> bool {
             &eval_operand(b, current),
             |o| o >= 0,
         ),
+        // Logical operators
         FilterExpr::And(l, r) => eval_filter(l, current) && eval_filter(r, current),
         FilterExpr::Or(l, r) => eval_filter(l, current) || eval_filter(r, current),
         FilterExpr::Not(i) => !eval_filter(i, current),
+        // Truthiness check
         FilterExpr::Truthy(op) => truthy(&eval_operand(op, current)),
     }
 }
 
+/// Determines the truthiness of a JSON value.
 fn truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
@@ -261,9 +286,11 @@ fn truthy(v: &Value) -> bool {
     }
 }
 
+/// Evaluates an operand against the current JSON value.
 fn eval_operand(op: &Operand, current: &Value) -> Value {
     match op {
         Operand::Literal(v) => v.clone(),
+        // Lowercase transformation
         Operand::Lower(inner) => {
             let v = eval_operand(inner, current);
             if let Some(s) = v.as_str() {
@@ -272,6 +299,7 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
                 v
             }
         }
+        // Uppercase transformation
         Operand::Upper(inner) => {
             let v = eval_operand(inner, current);
             if let Some(s) = v.as_str() {
@@ -280,6 +308,7 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
                 v
             }
         }
+        // Length calculation
         Operand::Length(inner) => {
             let v = eval_operand(inner, current);
             let len = match v {
@@ -290,10 +319,12 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
             };
             Value::from(len)
         }
+        // Path evaluation
         Operand::CurrentPath(tokens) => {
             let mut nodes = vec![current];
             for t in tokens {
                 nodes = match t {
+                    // Object key lookup
                     PathToken::Key(k) => nodes
                         .into_iter()
                         .flat_map(|n| match n {
@@ -301,6 +332,7 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
                             _ => Vec::new(),
                         })
                         .collect(),
+                    // Array index lookup
                     PathToken::Index(i) => {
                         if *i < 0 {
                             Vec::new()
@@ -315,6 +347,7 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
                                 .collect()
                         }
                     }
+                    // Wildcard: all values in array or object
                     PathToken::Wildcard => nodes
                         .into_iter()
                         .flat_map(|n| match n {
@@ -325,6 +358,7 @@ fn eval_operand(op: &Operand, current: &Value) -> Value {
                         .collect(),
                 }
             }
+            // Return first matched node or Null
             nodes.first().cloned().cloned().unwrap_or(Value::Null)
         }
     }

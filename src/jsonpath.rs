@@ -1,69 +1,77 @@
-use crate::engine::JpOptions;
 use crate::filter::FilterExpr;
 use crate::parser::{ParseError, Parser};
 use serde_json::Value;
 
+/// Represents a parsed JSONPath, consisting of a sequence of segments.
 #[derive(Debug, Clone)]
 pub struct Path {
     pub segments: Vec<Segment>,
 }
 
+/// Enum for each possible segment in a JSONPath expression.
 #[derive(Debug, Clone)]
 pub enum Segment {
-    Root,        // $
-    Key(String), // .foo or ['foo']
-    Wildcard,    // .* or [*]
-    Index(i64),  // [0]
+    Root,        // `$` - root of the JSON document
+    Key(String), // `.foo` or `['foo']` - object key access
+    Wildcard,    // `.*` or `[*]` - matches all child elements
+    Index(i64),  // `[0]` - array index access
     Slice {
         start: Option<i64>,
         end: Option<i64>,
         step: Option<i64>,
-    }, // [start:end:step]
-    Recursive,   // ..
-    Filter(Box<FilterExpr>), // [?(expr)]
+    }, // `[start:end:step]` - array slicing
+    Recursive,   // `..` - recursive descent
+    Filter(Box<FilterExpr>), // `[?(expr)]` - filter expression
 }
 
 pub type ParseErr = ParseError;
 
-/// Internal engine
-pub fn from_value_with_opts(data: &Value, path: &str, opts: &JpOptions) -> Value {
+/// Entry point: evaluates a JSONPath string against a JSON value.
+/// Returns the matched values as a JSON array, or Null if no match.
+pub fn from_value(data: &Value, path: &str) -> Value {
     match parse_path(path) {
         Ok(ast) => {
             let refs = eval_path(data, &ast);
             if refs.is_empty() {
-                opts.default.clone().unwrap_or(Value::Null)
+                Value::Null
             } else {
                 Value::Array(refs.into_iter().cloned().collect())
             }
         }
-        Err(_) => opts.default.clone().unwrap_or(Value::Null),
+        Err(_) => Value::Null,
     }
 }
 
+/// Parses a JSONPath string into a Path AST.
 fn parse_path(input: &str) -> Result<Path, ParseErr> {
     let mut p = PathParser::new(input);
     p.parse()
 }
 
+/// Parser for JSONPath strings.
 pub struct PathParser<'a> {
     parser: Parser<'a>,
 }
 
 impl<'a> PathParser<'a> {
+    /// Creates a new PathParser from a string slice.
     pub fn new(s: &'a str) -> Self {
         Self {
             parser: Parser::new(s),
         }
     }
 
+    /// Parses the full path, returning a Path AST.
     fn parse(&mut self) -> Result<Path, ParseErr> {
         let mut segments = Vec::new();
         self.parser.skip_ws();
+        // Path must start with `$`
         if !self.parser.consume_char('$') {
             return Err(ParseErr::InvalidSyntax("path must start with `$`".into()));
         }
         segments.push(Segment::Root);
 
+        // Parse each segment until end of input
         while !self.parser.eof() {
             self.parser.skip_ws();
 
@@ -76,17 +84,21 @@ impl<'a> PathParser<'a> {
         Ok(Path { segments })
     }
 
+    /// Parses the next segment in the path.
     fn parse_next_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
+        // Recursive descent: `..`
         if self.parser.peek_str("..") {
             self.parser.consume_char('.');
             self.parser.consume_char('.');
             return Ok(Some(Segment::Recursive));
         }
 
+        // Dot notation: `.key` or `.*`
         if self.parser.consume_char('.') {
             return self.parse_dot_segment();
         }
 
+        // Bracket notation: `[key]`, `[index]`, `[slice]`, `[*]`, `[?(filter)]`
         if self.parser.consume_char('[') {
             return self.parse_bracket_segment();
         }
@@ -94,6 +106,7 @@ impl<'a> PathParser<'a> {
         Ok(None)
     }
 
+    /// Parses a dot segment: either a wildcard or a key.
     fn parse_dot_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
         if self.parser.consume_char('*') {
             Ok(Some(Segment::Wildcard))
@@ -103,27 +116,33 @@ impl<'a> PathParser<'a> {
         }
     }
 
+    /// Parses a bracket segment: wildcard, filter, key, index, or slice.
     fn parse_bracket_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
         self.parser.skip_ws();
 
+        // Wildcard: `[*]`
         if self.parser.consume_char('*') {
             self.parser.expect(']')?;
             return Ok(Some(Segment::Wildcard));
         }
 
+        // Filter: `[?(expr)]`
         if self.parser.peek_char() == Some('?') {
             return self.parse_filter_segment();
         }
 
+        // Quoted key: `['key']` or `["key"]`
         if matches!(self.parser.peek_char(), Some('\'') | Some('"')) {
             let key = self.parser.parse_quoted_string()?;
             self.parser.expect(']')?;
             return Ok(Some(Segment::Key(key)));
         }
 
+        // Index or slice: `[0]`, `[1:3]`, `[1:3:2]`
         self.parse_index_or_slice_segment()
     }
 
+    /// Parses a filter segment: `[?(expr)]`
     fn parse_filter_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
         self.parser.consume_char('?');
         self.parser.expect('(')?;
@@ -133,25 +152,30 @@ impl<'a> PathParser<'a> {
         Ok(Some(Segment::Filter(Box::new(expr))))
     }
 
+    /// Parses an index or slice segment.
     fn parse_index_or_slice_segment(&mut self) -> Result<Option<Segment>, ParseErr> {
         let slice_content = self.parser.capture_until(']')?;
         self.parser.expect(']')?;
 
+        // Slice: contains `:`
         if slice_content.contains(':') {
             self.parse_slice(&slice_content)
         } else {
+            // Index: single integer
             let mut tmp = Parser::new(&slice_content);
             let idx = tmp.parse_int()?;
             Ok(Some(Segment::Index(idx)))
         }
     }
 
+    /// Parses a slice segment: `[start:end:step]`
     fn parse_slice(&self, content: &str) -> Result<Option<Segment>, ParseErr> {
         let parts: Vec<&str> = content.split(':').collect();
         if parts.len() > 3 {
             return Err(ParseErr::InvalidSyntax("slice too many components".into()));
         }
 
+        // Helper to parse optional i64 values
         let parse_opt_i64 = |s: &str| -> Result<Option<i64>, ParseErr> {
             let t = s.trim();
             if t.is_empty() {
@@ -171,6 +195,8 @@ impl<'a> PathParser<'a> {
     }
 }
 
+/// Evaluates a parsed Path AST against a JSON value.
+/// Returns a vector of references to matched values.
 fn eval_path<'a>(root: &'a Value, path: &Path) -> Vec<&'a Value> {
     let mut current: Vec<&Value> = vec![root];
     for seg in &path.segments {
@@ -179,11 +205,8 @@ fn eval_path<'a>(root: &'a Value, path: &Path) -> Vec<&'a Value> {
     current
 }
 
-fn eval_segment<'a>(
-    current: &[&'a Value],
-    segment: &Segment,
-    root: &'a Value,
-) -> Vec<&'a Value> {
+/// Evaluates a single segment against the current set of values.
+fn eval_segment<'a>(current: &[&'a Value], segment: &Segment, root: &'a Value) -> Vec<&'a Value> {
     match segment {
         Segment::Root => vec![root],
         Segment::Key(k) => eval_key_segment(current, k),
@@ -195,6 +218,7 @@ fn eval_segment<'a>(
     }
 }
 
+/// Evaluates a key segment: gets the value for the given key from each object.
 fn eval_key_segment<'a>(current: &[&'a Value], key: &str) -> Vec<&'a Value> {
     current
         .iter()
@@ -205,6 +229,7 @@ fn eval_key_segment<'a>(current: &[&'a Value], key: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+/// Evaluates an index segment: gets the value at the given index from each array.
 fn eval_index_segment<'a>(current: &[&'a Value], index: i64) -> Vec<&'a Value> {
     if index < 0 {
         return Vec::new();
@@ -220,6 +245,7 @@ fn eval_index_segment<'a>(current: &[&'a Value], index: i64) -> Vec<&'a Value> {
         .collect()
 }
 
+/// Evaluates a slice segment: gets a slice of values from each array.
 fn eval_slice_segment<'a>(
     current: &[&'a Value],
     start: Option<i64>,
@@ -235,10 +261,12 @@ fn eval_slice_segment<'a>(
         .collect()
 }
 
+/// Evaluates a wildcard segment: gets all child values from each object or array.
 fn eval_wildcard_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
     current.iter().flat_map(|v| get_child_values(v)).collect()
 }
 
+/// Evaluates a recursive segment: collects all descendant values recursively.
 fn eval_recursive_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
     current
         .iter()
@@ -250,10 +278,8 @@ fn eval_recursive_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
         .collect()
 }
 
-fn eval_filter_segment<'a>(
-    current: &[&'a Value],
-    expr: &FilterExpr,
-) -> Vec<&'a Value> {
+/// Evaluates a filter segment: filters values using the filter expression.
+fn eval_filter_segment<'a>(current: &[&'a Value], expr: &FilterExpr) -> Vec<&'a Value> {
     current
         .iter()
         .flat_map(|v| get_filterable_values(v))
@@ -261,6 +287,7 @@ fn eval_filter_segment<'a>(
         .collect()
 }
 
+/// Gets all child values of an object or array.
 fn get_child_values(value: &Value) -> Vec<&Value> {
     match value {
         Value::Array(arr) => arr.iter().collect(),
@@ -269,6 +296,7 @@ fn get_child_values(value: &Value) -> Vec<&Value> {
     }
 }
 
+/// Gets values that can be filtered: array elements or the value itself.
 fn get_filterable_values(value: &Value) -> Vec<&Value> {
     match value {
         Value::Array(arr) => arr.iter().collect(),
@@ -276,6 +304,7 @@ fn get_filterable_values(value: &Value) -> Vec<&Value> {
     }
 }
 
+/// Slices an array according to start, end, and step parameters.
 fn slice_array(
     arr: &Vec<Value>,
     start: Option<i64>,
@@ -288,6 +317,7 @@ fn slice_array(
         return Vec::new();
     }
 
+    // Normalizes an index, handling negative values.
     let normalize_index = |i: i64| -> i64 {
         if i < 0 {
             (n + i).clamp(0, n)
@@ -308,6 +338,7 @@ fn slice_array(
     }
 }
 
+/// Slices an array forward (step > 0).
 fn slice_forward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64) -> Vec<&Value> {
     let mut out = Vec::new();
     let mut i = lo;
@@ -320,6 +351,7 @@ fn slice_forward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64) -> Vec<&Value> {
     out
 }
 
+/// Slices an array backward (step < 0).
 fn slice_backward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64, n: i64) -> Vec<&Value> {
     let mut out = Vec::new();
     if hi == 0 {
@@ -339,6 +371,7 @@ fn slice_backward(arr: &Vec<Value>, lo: i64, hi: i64, step: i64, n: i64) -> Vec<
     out
 }
 
+/// Recursively collects all descendant values of a value.
 fn recurse_collect<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
     out.push(v);
     match v {
