@@ -1,6 +1,7 @@
 use crate::filter::FilterExpr;
 use crate::parser::{ParseError, Parser};
 use serde_json::Value;
+use tracing::error;
 
 /// Represents a parsed JSONPath, consisting of a sequence of segments.
 #[derive(Debug, Clone)]
@@ -49,7 +50,11 @@ pub fn from_value(data: &Value, path: &str) -> Value {
                 Value::Array(refs.into_iter().cloned().collect())
             }
         }
-        Err(_) => Value::Null,
+        Err(e) => {
+            let bt = std::backtrace::Backtrace::capture();
+            error!(target: "jsonpath", error = ?e, backtrace = ?bt, "JSONPath parse error");
+            Value::Null
+        }
     }
 }
 
@@ -124,7 +129,8 @@ impl<'a> PathParser<'a> {
                 return Ok(Some(Segment::Wildcard));
             }
             if let Some(c) = self.parser.peek_char() {
-                if c == '_' || c.is_ascii_alphanumeric() { // start of identifier
+                if c == '_' || c.is_ascii_alphanumeric() {
+                    // start of identifier
                     let key = self.parser.parse_identifier()?;
                     return Ok(Some(Segment::Key(key)));
                 }

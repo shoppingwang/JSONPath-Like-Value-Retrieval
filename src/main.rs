@@ -2,6 +2,9 @@ use clap::Parser; // Import clap for command-line argument parsing
 use json_path_like_extraction as jple; // Import the json_path_like_extraction crate as jple
 use std::fs; // Import filesystem utilities
 use std::io::{self, Read}; // Import IO traits and types
+use tracing::{error, info};
+use tracing_error::ErrorLayer;
+use tracing_subscriber::{fmt, EnvFilter, prelude::*};
 
 // Define a struct to hold command-line arguments
 #[derive(Parser, Debug)]
@@ -23,7 +26,25 @@ fn read_stdin() -> io::Result<String> {
     Ok(buf) // Return the buffer as a String
 }
 
+fn init_tracing() {
+    // Layer formatting: suppress time/level/target so successful JSON result is printed raw.
+    let fmt_layer = fmt::layer()
+        .with_target(false)
+        .with_level(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .without_time();
+
+    // Initialize global tracing subscriber once. If already set (e.g. by external caller), ignore error.
+    let registry = tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(fmt_layer)
+        .with(ErrorLayer::default());
+    let _ = tracing::subscriber::set_global_default(registry); // ignore error if already set
+}
+
 fn main() {
+    init_tracing();
     let args = Args::parse(); // Parse command-line arguments
 
     // Determine the source of the expression:
@@ -41,12 +62,15 @@ fn main() {
     // Evaluate the expression using the jple crate
     match jple::eval(&expr) {
         Ok(v) => {
-            // If successful, pretty-print the result as JSON
-            println!("{}", serde_json::to_string_pretty(&v).unwrap());
+            // If successful, pretty-print the result as JSON via tracing (info level)
+            match serde_json::to_string_pretty(&v) {
+                Ok(json) => info!(target: "jple", "{json}"),
+                Err(e) => error!(target: "jple", error = %e, "Failed to serialize evaluation result"),
+            }
         }
         Err(e) => {
-            // If evaluation fails, print the error and exit with code 1
-            eprintln!("{e}");
+            // If evaluation fails, log the error and exit with code 1
+            error!(target: "jple", error = %e, "Evaluation failed");
             std::process::exit(1);
         }
     }
