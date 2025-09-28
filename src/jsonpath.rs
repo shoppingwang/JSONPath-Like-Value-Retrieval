@@ -29,7 +29,7 @@ pub type ParseErr = ParseError;
 pub fn from_value_with_opts(data: &Value, path: &str, opts: &JpOptions) -> Value {
     match parse_path(path) {
         Ok(ast) => {
-            let refs = eval_path(data, &ast, opts);
+            let refs = eval_path(data, &ast);
             if refs.is_empty() {
                 opts.default.clone().unwrap_or(Value::Null)
             } else {
@@ -171,10 +171,10 @@ impl<'a> PathParser<'a> {
     }
 }
 
-fn eval_path<'a>(root: &'a Value, path: &Path, opts: &JpOptions) -> Vec<&'a Value> {
+fn eval_path<'a>(root: &'a Value, path: &Path) -> Vec<&'a Value> {
     let mut current: Vec<&Value> = vec![root];
     for seg in &path.segments {
-        current = eval_segment(&current, seg, root, opts);
+        current = eval_segment(&current, seg, root);
     }
     current
 }
@@ -183,7 +183,6 @@ fn eval_segment<'a>(
     current: &[&'a Value],
     segment: &Segment,
     root: &'a Value,
-    opts: &JpOptions,
 ) -> Vec<&'a Value> {
     match segment {
         Segment::Root => vec![root],
@@ -192,7 +191,7 @@ fn eval_segment<'a>(
         Segment::Slice { start, end, step } => eval_slice_segment(current, *start, *end, *step),
         Segment::Wildcard => eval_wildcard_segment(current),
         Segment::Recursive => eval_recursive_segment(current),
-        Segment::Filter(expr) => eval_filter_segment(current, expr, opts),
+        Segment::Filter(expr) => eval_filter_segment(current, expr),
     }
 }
 
@@ -254,12 +253,11 @@ fn eval_recursive_segment<'a>(current: &[&'a Value]) -> Vec<&'a Value> {
 fn eval_filter_segment<'a>(
     current: &[&'a Value],
     expr: &FilterExpr,
-    opts: &JpOptions,
 ) -> Vec<&'a Value> {
     current
         .iter()
         .flat_map(|v| get_filterable_values(v))
-        .filter(|v| crate::filter::eval_filter(expr, v, opts))
+        .filter(|v| crate::filter::eval_filter(expr, v))
         .collect()
 }
 

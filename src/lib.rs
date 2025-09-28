@@ -1,28 +1,20 @@
-pub mod errors;
-pub mod context;
-pub mod engine;     // legacy engine kept intact to preserve exact JSONPath behavior
-pub mod functions;  // plugin model
-mod expression;
-mod jsonpath;
-mod filter;
 mod comparison;
+pub mod engine;
+pub mod errors;
+mod expression;
+mod filter;
+mod jsonpath;
 mod parser;
 
+use errors::{EvalError, Result};
 use serde_json::Value;
-use errors::{Result, EvalError};
-use context::Context;
-use functions::Registry;
 
-/// The main evaluator. Uses the legacy engine's parser and evaluator internally
-/// to keep JSONPath behavior exactly as-is. Public API returns Result as requested.
-pub struct Evaluator {
-    _ctx: Context,
-    registry: Registry, // reserved for future: custom functions dispatch
-}
+/// The main evaluator. Simplified to focus on core functionality.
+pub struct Evaluator;
 
 impl Evaluator {
-    pub fn new(registry: Registry) -> Self {
-        Self { _ctx: Context::default(), registry }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Evaluate an expression; returns Result instead of Null-on-error.
@@ -38,9 +30,9 @@ impl Evaluator {
     }
 }
 
-/// Convenience: evaluate with built-in registry.
+/// Convenience: evaluate with default evaluator.
 pub fn eval(expr: &str) -> Result<Value> {
-    let ev = Evaluator::new(Registry::with_builtins());
+    let ev = Evaluator::new();
     ev.eval(expr)
 }
 
@@ -50,4 +42,4 @@ pub fn eval_coerce_null(expr: &str) -> Value {
 }
 
 /// Re-export the most-used helpers for users who call functions directly.
-pub use engine::{from_json, first, unique, or_default};
+pub use engine::{first, from_json, or_default, unique};

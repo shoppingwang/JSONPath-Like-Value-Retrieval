@@ -1,6 +1,5 @@
 use serde_json::Value;
 use crate::comparison::cmp_values;
-use crate::engine::JpOptions;
 
 #[derive(Debug, Clone)]
 pub enum FilterExpr {
@@ -212,48 +211,42 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
     Err(ParseErr::InvalidSyntax("invalid operand".into()))
 }
 
-pub fn eval_filter(expr: &FilterExpr, current: &Value, opts: &JpOptions) -> bool {
+pub fn eval_filter(expr: &FilterExpr, current: &Value) -> bool {
     match expr {
         FilterExpr::Eq(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o == 0,
         ),
         FilterExpr::Ne(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o != 0,
         ),
         FilterExpr::Lt(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o < 0,
         ),
         FilterExpr::Lte(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o <= 0,
         ),
         FilterExpr::Gt(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o > 0,
         ),
         FilterExpr::Gte(a, b) => cmp_values(
-            &eval_operand(a, current, opts),
-            &eval_operand(b, current, opts),
-            opts,
+            &eval_operand(a, current),
+            &eval_operand(b, current),
             |o| o >= 0,
         ),
-        FilterExpr::And(l, r) => eval_filter(l, current, opts) && eval_filter(r, current, opts),
-        FilterExpr::Or(l, r) => eval_filter(l, current, opts) || eval_filter(r, current, opts),
-        FilterExpr::Not(i) => !eval_filter(i, current, opts),
-        FilterExpr::Truthy(op) => truthy(&eval_operand(op, current, opts)),
+        FilterExpr::And(l, r) => eval_filter(l, current) && eval_filter(r, current),
+        FilterExpr::Or(l, r) => eval_filter(l, current) || eval_filter(r, current),
+        FilterExpr::Not(i) => !eval_filter(i, current),
+        FilterExpr::Truthy(op) => truthy(&eval_operand(op, current)),
     }
 }
 
@@ -268,11 +261,11 @@ fn truthy(v: &Value) -> bool {
     }
 }
 
-fn eval_operand(op: &Operand, current: &Value, opts: &JpOptions) -> Value {
+fn eval_operand(op: &Operand, current: &Value) -> Value {
     match op {
         Operand::Literal(v) => v.clone(),
         Operand::Lower(inner) => {
-            let v = eval_operand(inner, current, opts);
+            let v = eval_operand(inner, current);
             if let Some(s) = v.as_str() {
                 Value::String(s.to_lowercase())
             } else {
@@ -280,7 +273,7 @@ fn eval_operand(op: &Operand, current: &Value, opts: &JpOptions) -> Value {
             }
         }
         Operand::Upper(inner) => {
-            let v = eval_operand(inner, current, opts);
+            let v = eval_operand(inner, current);
             if let Some(s) = v.as_str() {
                 Value::String(s.to_uppercase())
             } else {
@@ -288,7 +281,7 @@ fn eval_operand(op: &Operand, current: &Value, opts: &JpOptions) -> Value {
             }
         }
         Operand::Length(inner) => {
-            let v = eval_operand(inner, current, opts);
+            let v = eval_operand(inner, current);
             let len = match v {
                 Value::Array(a) => a.len() as i64,
                 Value::Object(m) => m.len() as i64,

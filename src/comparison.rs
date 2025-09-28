@@ -1,36 +1,12 @@
 use serde_json::Value;
-use crate::engine::JpOptions;
 
-#[derive(Clone, Copy)]
-pub enum CmpMode {
-    CaseSensitive,
-    CaseFoldLower,
-    CaseFoldUpper,
-}
-
-impl Default for CmpMode {
-    fn default() -> Self {
-        CmpMode::CaseSensitive
-    }
-}
-
-fn cmp_strings(sa: &str, sb: &str, mode: CmpMode, pred_on_ord: impl Fn(i32) -> bool) -> bool {
-    let (la, lb) = match mode {
-        CmpMode::CaseSensitive => (sa.to_owned(), sb.to_owned()),
-        CmpMode::CaseFoldLower => (sa.to_lowercase(), sb.to_lowercase()),
-        CmpMode::CaseFoldUpper => (sa.to_uppercase(), sb.to_uppercase()),
-    };
-    pred_on_ord(la.cmp(&lb) as i32)
-}
-
-pub fn cmp_values<F>(a: &Value, b: &Value, opts: &JpOptions, pred_on_ord: F) -> bool
+pub fn cmp_values<F>(a: &Value, b: &Value, pred_on_ord: F) -> bool
 where
     F: Fn(i32) -> bool,
 {
+    // Simplified to always use case-sensitive comparison
     match (a, b) {
-        (Value::String(sa), Value::String(sb)) => {
-            cmp_strings(sa, sb, opts.cmp, pred_on_ord)
-        }
+        (Value::String(sa), Value::String(sb)) => pred_on_ord(sa.cmp(sb) as i32),
         (Value::Number(na), Value::Number(nb)) => {
             if let (Some(da), Some(db)) = (na.as_f64(), nb.as_f64()) {
                 let ord = if (da - db).abs() < f64::EPSILON {
@@ -60,11 +36,9 @@ where
                 };
                 pred_on_ord(ord)
             } else {
-                cmp_strings(&a.to_string(), &b.to_string(), opts.cmp, pred_on_ord)
+                pred_on_ord(a.to_string().cmp(&b.to_string()) as i32)
             }
         }
-        _ => {
-            cmp_strings(&a.to_string(), &b.to_string(), opts.cmp, pred_on_ord)
-        }
+        _ => pred_on_ord(a.to_string().cmp(&b.to_string()) as i32),
     }
 }

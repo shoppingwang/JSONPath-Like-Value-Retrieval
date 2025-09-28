@@ -1,4 +1,4 @@
-use crate::{comparison, expression, jsonpath};
+use crate::{ expression, jsonpath};
 use itertools::Itertools;
 use serde_json::{json, Value};
 
@@ -23,7 +23,6 @@ pub fn eval_expr(expr: &str) -> Value {
 #[derive(Default, Clone)]
 pub struct JpOptions {
     pub default: Option<Value>,
-    pub cmp: comparison::CmpMode,
 }
 
 /// Convenience: parse JSON string and evaluate `path` with default options.
