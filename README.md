@@ -45,9 +45,12 @@ Output:
 ### Library Usage
 
 ```rust
-use json_path_like_extraction::eval_expr;
-let result = eval_expr("first(from_json(\"{\\\"a\\\":[1,2,3]}\", \"$.a[*]\"))");
-assert_eq!(result, Some(serde_json::json!(1)));
+use json_path_like_extraction as jple;
+use serde_json::json;
+
+let expr = r#"first(from_json("{\"otel\":{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":\"nexa-agent-server\"}]}}]}}","$.otel.resourceSpans[*].resource.attributes[?(@.key==\"service.name\")].value"))"#;
+let out = jple::eval(expr).unwrap();
+assert_eq!(out, json!("nexa-agent-server"));
 ```
 
 ## Expression Language
