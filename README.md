@@ -123,6 +123,12 @@ cargo run -- --expr "first(from_json(\"{\\\"otel\\\":{\\\"resourceSpans\\\":[{\\
 # => "nexa-agent-server"
 ```
 
+**Recursive descent for all `name` fields**
+```bash
+cargo run -- --expr "from_json(\"{\\\"departments\\\":[{\\\"team\\\":[{\\\"name\\\":\\\"Alice Johnson\\\",\\\"info\\\":{\\\"position\\\":\\\"Software Engineer\\\",\\\"age\\\":29,\\\"email\\\":\\\"alice.johnson@example.com\\\"}},{\\\"name\\\":\\\"Bob Smith\\\",\\\"info\\\":{\\\"position\\\":\\\"UI/UX Designer\\\",\\\"age\\\":34,\\\"email\\\":\\\"bob.smith@example.com\\\"}}]},{\\\"team\\\":[{\\\"name\\\":\\\"Carol Lee\\\",\\\"info\\\":{\\\"position\\\":\\\"Project Manager\\\",\\\"age\\\":41,\\\"email\\\":\\\"carol.lee@example.com\\\"}},{\\\"name\\\":\\\"David Kim\\\",\\\"info\\\":{\\\"position\\\":\\\"QA Engineer\\\",\\\"age\\\":27,\\\"email\\\":\\\"david.kim@example.com\\\"}}]}]}\", \"$..name\")"
+# =>  ["Alice Johnson", "Bob Smith", "Carol Lee", "David Kim"]
+```
+
 **Fallback default**
 ```bash
 cargo run -- --expr "or_default(from_json(\"{\\\"a\\\":1}\", \"$.missing\"), \"{\\\"fallback\\\":true}\")"
