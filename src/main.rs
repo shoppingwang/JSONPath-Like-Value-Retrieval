@@ -1,10 +1,10 @@
 use clap::Parser; // Import clap for command-line argument parsing
-use json_path_like_extraction as jple; // Import the json_path_like_extraction crate as jple
+use json_path_like_value_retrieval as jpl; // Import the json_path_like_value_retrieval crate as jpl
 use std::fs; // Import filesystem utilities
 use std::io::{self, Read}; // Import IO traits and types
 use tracing::{error, info};
 use tracing_error::ErrorLayer;
-use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 // Define a struct to hold command-line arguments
 #[derive(Parser, Debug)]
@@ -59,18 +59,20 @@ fn main() {
         read_stdin().expect("failed to read expression from stdin")
     };
 
-    // Evaluate the expression using the jple crate
-    match jple::eval(&expr) {
+    // Evaluate the expression using the jpl crate
+    match jpl::eval(&expr) {
         Ok(v) => {
             // If successful, pretty-print the result as JSON via tracing (info level)
             match serde_json::to_string_pretty(&v) {
-                Ok(json) => info!(target: "jple", "{json}"),
-                Err(e) => error!(target: "jple", error = %e, "Failed to serialize evaluation result"),
+                Ok(json) => info!(target: "jpl", "{json}"),
+                Err(e) => {
+                    error!(target: "jpl", error = %e, "Failed to serialize evaluation result")
+                }
             }
         }
         Err(e) => {
             // If evaluation fails, log the error and exit with code 1
-            error!(target: "jple", error = %e, "Evaluation failed");
+            error!(target: "jpl", error = %e, "Evaluation failed");
             std::process::exit(1);
         }
     }

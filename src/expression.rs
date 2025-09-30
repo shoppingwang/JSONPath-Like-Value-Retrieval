@@ -1,8 +1,8 @@
 // src/expression.rs
 
 // Import required modules and functions from other files
+use crate::parser::{ParseError, Parser};
 use crate::{first, from_json, or_default, unique};
-use crate::parser::{Parser, ParseError};
 use serde_json::Value;
 
 /// Enum representing an expression node in the AST.

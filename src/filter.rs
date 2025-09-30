@@ -1,15 +1,15 @@
-use serde_json::Value;
 use crate::comparison::cmp_values;
+use serde_json::Value;
 
 /// Represents a filter expression for JSONPath filtering.
 #[derive(Debug, Clone)]
 pub enum FilterExpr {
-    Eq(Operand, Operand),   // Equality comparison
-    Ne(Operand, Operand),   // Not equal comparison
-    Lt(Operand, Operand),   // Less than comparison
-    Lte(Operand, Operand),  // Less than or equal comparison
-    Gt(Operand, Operand),   // Greater than comparison
-    Gte(Operand, Operand),  // Greater than or equal comparison
+    Eq(Operand, Operand),                  // Equality comparison
+    Ne(Operand, Operand),                  // Not equal comparison
+    Lt(Operand, Operand),                  // Less than comparison
+    Lte(Operand, Operand),                 // Less than or equal comparison
+    Gt(Operand, Operand),                  // Greater than comparison
+    Gte(Operand, Operand),                 // Greater than or equal comparison
     And(Box<FilterExpr>, Box<FilterExpr>), // Logical AND
     Or(Box<FilterExpr>, Box<FilterExpr>),  // Logical OR
     Not(Box<FilterExpr>),                  // Logical NOT
@@ -29,9 +29,9 @@ pub enum Operand {
 /// Represents a token in a JSONPath.
 #[derive(Debug, Clone)]
 pub enum PathToken {
-    Key(String),     // Object key
-    Index(i64),      // Array index
-    Wildcard,        // Wildcard for any key or index
+    Key(String), // Object key
+    Index(i64),  // Array index
+    Wildcard,    // Wildcard for any key or index
 }
 
 use crate::jsonpath::ParseErr;
@@ -142,39 +142,79 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
     parser.skip_ws();
     // Parse string literal
     if parser.peek_char() == Some('"') || parser.peek_char() == Some('\'') {
-        return Ok(Operand::Literal(Value::String(parser.parse_quoted_string()?)));
+        return Ok(Operand::Literal(Value::String(
+            parser.parse_quoted_string()?,
+        )));
     }
     // Parse boolean literals
     if parser.peek_str("true") {
-        for _ in 0..4 { parser.consume_char('t'); parser.consume_char('r'); parser.consume_char('u'); parser.consume_char('e'); }
+        for _ in 0..4 {
+            parser.consume_char('t');
+            parser.consume_char('r');
+            parser.consume_char('u');
+            parser.consume_char('e');
+        }
         return Ok(Operand::Literal(Value::Bool(true)));
     }
     if parser.peek_str("false") {
-        for _ in 0..5 { parser.consume_char('f'); parser.consume_char('a'); parser.consume_char('l'); parser.consume_char('s'); parser.consume_char('e'); }
+        for _ in 0..5 {
+            parser.consume_char('f');
+            parser.consume_char('a');
+            parser.consume_char('l');
+            parser.consume_char('s');
+            parser.consume_char('e');
+        }
         return Ok(Operand::Literal(Value::Bool(false)));
     }
     // Parse null literal
     if parser.peek_str("null") {
-        for _ in 0..4 { parser.consume_char('n'); parser.consume_char('u'); parser.consume_char('l'); parser.consume_char('l'); }
+        for _ in 0..4 {
+            parser.consume_char('n');
+            parser.consume_char('u');
+            parser.consume_char('l');
+            parser.consume_char('l');
+        }
         return Ok(Operand::Literal(Value::Null));
     }
     // Parse lower() transformation
     if parser.peek_str("lower(") {
-        for _ in 0..6 { parser.consume_char('l'); parser.consume_char('o'); parser.consume_char('w'); parser.consume_char('e'); parser.consume_char('r'); parser.consume_char('('); }
+        for _ in 0..6 {
+            parser.consume_char('l');
+            parser.consume_char('o');
+            parser.consume_char('w');
+            parser.consume_char('e');
+            parser.consume_char('r');
+            parser.consume_char('(');
+        }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Lower(Box::new(inner)));
     }
     // Parse upper() transformation
     if parser.peek_str("upper(") {
-        for _ in 0..6 { parser.consume_char('u'); parser.consume_char('p'); parser.consume_char('p'); parser.consume_char('e'); parser.consume_char('r'); parser.consume_char('('); }
+        for _ in 0..6 {
+            parser.consume_char('u');
+            parser.consume_char('p');
+            parser.consume_char('p');
+            parser.consume_char('e');
+            parser.consume_char('r');
+            parser.consume_char('(');
+        }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Upper(Box::new(inner)));
     }
     // Parse length() transformation
     if parser.peek_str("length(") {
-        for _ in 0..7 { parser.consume_char('l'); parser.consume_char('e'); parser.consume_char('n'); parser.consume_char('g'); parser.consume_char('t'); parser.consume_char('h'); parser.consume_char('('); }
+        for _ in 0..7 {
+            parser.consume_char('l');
+            parser.consume_char('e');
+            parser.consume_char('n');
+            parser.consume_char('g');
+            parser.consume_char('t');
+            parser.consume_char('h');
+            parser.consume_char('(');
+        }
         let inner = parse_operand(parser)?;
         parser.expect(')')?;
         return Ok(Operand::Length(Box::new(inner)));
@@ -235,36 +275,36 @@ fn parse_operand(parser: &mut Parser) -> Result<Operand, ParseErr> {
 pub fn eval_filter(expr: &FilterExpr, current: &Value) -> bool {
     match expr {
         // Comparison operators use cmp_values for evaluation
-        FilterExpr::Eq(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o == 0,
-        ),
-        FilterExpr::Ne(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o != 0,
-        ),
-        FilterExpr::Lt(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o < 0,
-        ),
-        FilterExpr::Lte(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o <= 0,
-        ),
-        FilterExpr::Gt(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o > 0,
-        ),
-        FilterExpr::Gte(a, b) => cmp_values(
-            &eval_operand(a, current),
-            &eval_operand(b, current),
-            |o| o >= 0,
-        ),
+        FilterExpr::Eq(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o == 0
+            })
+        }
+        FilterExpr::Ne(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o != 0
+            })
+        }
+        FilterExpr::Lt(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o < 0
+            })
+        }
+        FilterExpr::Lte(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o <= 0
+            })
+        }
+        FilterExpr::Gt(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o > 0
+            })
+        }
+        FilterExpr::Gte(a, b) => {
+            cmp_values(&eval_operand(a, current), &eval_operand(b, current), |o| {
+                o >= 0
+            })
+        }
         // Logical operators
         FilterExpr::And(l, r) => eval_filter(l, current) && eval_filter(r, current),
         FilterExpr::Or(l, r) => eval_filter(l, current) || eval_filter(r, current),

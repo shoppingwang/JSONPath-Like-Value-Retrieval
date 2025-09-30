@@ -1,15 +1,15 @@
 [package]
-name = "json-path-like-extraction"
+name = "json-path-like-value-retrieval"
 version = "0.1.0"
 edition = "2021"
 authors = ["Xiaoping Wang"]
 
 [lib]
-name = "json_path_like_extraction"
+name = "json_path_like_value_retrieval"
 path = "src/lib.rs"
 
 [[bin]]
-name = "jple"
+name = "jpl"
 path = "src/main.rs"
 
 [dependencies]

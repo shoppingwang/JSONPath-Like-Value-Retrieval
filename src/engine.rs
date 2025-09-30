@@ -13,7 +13,7 @@ use serde_json::Value;
 pub fn eval_expr(expr: &str) -> Value {
     match expression::parse_expr(expr) {
         Ok(ast) => expression::eval_ast(&ast), // Evaluate parsed AST
-        Err(_) => Value::Null, // Return Null on parse error
+        Err(_) => Value::Null,                 // Return Null on parse error
     }
 }
 
@@ -25,7 +25,7 @@ pub fn eval_expr(expr: &str) -> Value {
 /// Returns an array of matches, or Null if JSON is invalid or no match found.
 pub fn from_json(json_str: &str, path: &str) -> Value {
     let data: Value = match serde_json::from_str(json_str) {
-        Ok(v) => v, // Successfully parsed JSON
+        Ok(v) => v,                   // Successfully parsed JSON
         Err(_) => return Value::Null, // Return Null on parse error
     };
     jsonpath::from_value(&data, path) // Apply JSONPath to parsed data
@@ -36,7 +36,7 @@ pub fn from_json(json_str: &str, path: &str) -> Value {
 pub fn first(vals: &Value) -> Value {
     match vals {
         Value::Array(a) => a.first().cloned().unwrap_or(Value::Null), // First element or Null
-        _ => Value::Null, // Not an array
+        _ => Value::Null,                                             // Not an array
     }
 }
 
@@ -64,9 +64,9 @@ pub fn or_default(vals: &Value, default_json: &str) -> Value {
     let default_val = serde_json::from_str::<Value>(default_json)
         .unwrap_or_else(|_| Value::String(default_json.to_string())); // Fallback to string if not valid JSON
     match vals {
-        Value::Null => default_val, // Use default if Null
+        Value::Null => default_val,                     // Use default if Null
         Value::Array(a) if a.is_empty() => default_val, // Use default if empty array
-        _ => vals.clone(), // Otherwise, return original value
+        _ => vals.clone(),                              // Otherwise, return original value
     }
 }
 

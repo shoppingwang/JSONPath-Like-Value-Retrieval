@@ -45,11 +45,11 @@ Output:
 ### Library Usage
 
 ```rust
-use json_path_like_extraction as jple;
+use json_path_like_value_retrieval as jpl;
 use serde_json::json;
 
 let expr = r#"first(from_json("{\"otel\":{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":\"nexa-agent-server\"}]}}]}}","$.otel.resourceSpans[*].resource.attributes[?(@.key==\"service.name\")].value"))"#;
-let out = jple::eval(expr).unwrap();
+let out = jpl::eval(expr).unwrap();
 assert_eq!(out, json!("nexa-agent-server"));
 ```
 
