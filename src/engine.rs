@@ -107,9 +107,9 @@ mod tests {
         assert_eq!(out, json!("nexa-agent-server"));
     }
 
-    /// Tests unique and or_default functions.
+/// Tests that `unique` removes duplicate values.
     #[test]
-    fn unique_and_default() {
+    fn unique_deduplicates() {
         let json = r#"{"a":[1,1,2,2,3]}"#;
         let expr = format!(
             "unique(from_json('{}', '$.a[*]'))",
@@ -117,9 +117,13 @@ mod tests {
         );
         let out = eval_expr(&expr);
         assert_eq!(out, json!([1, 2, 3]));
+    }
 
-        let expr2 = "or_default(from_json('{\"a\":1}', '$.missing'), '{\"fallback\":true}')";
-        let out2 = eval_expr(expr2);
-        assert_eq!(out2, json!({"fallback": true}));
+    /// Tests that `or_default` returns the fallback when input is null / empty.
+    #[test]
+    fn or_default_uses_fallback() {
+        let expr = "or_default(from_json('{\"a\":1}', '$.missing'), '{\"fallback\":true}')";
+        let out = eval_expr(expr);
+        assert_eq!(out, json!({ "fallback": true }));
     }
 }
