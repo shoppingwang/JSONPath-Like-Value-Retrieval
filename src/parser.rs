@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::fmt;
 
 /// Represents possible errors that can occur during parsing.
 #[derive(Debug)]
@@ -11,6 +12,15 @@ pub enum ParseError {
 impl From<String> for ParseError {
     fn from(msg: String) -> Self {
         ParseError::InvalidSyntax(msg)
+    }
+}
+
+/// Implements the `Display` trait for `ParseError` to provide user-friendly error messages.
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::InvalidSyntax(msg) => write!(f, "Invalid Syntax: {}", msg),
+        }
     }
 }
 
